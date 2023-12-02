@@ -1,1 +1,1 @@
-# IMS
+# IMS - Modelování a simulace
