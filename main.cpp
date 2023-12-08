@@ -3,7 +3,6 @@
 #include <simlib.h>
 #include <random>
 #include <time.h>
-
 using namespace std;
 
 #define inputTime 5760
@@ -18,40 +17,37 @@ double checkpaste;
 
 double price;
 
-Stat STAT_produce_time("Produce time");
+
+
+Stat STAT_produce_time("Average bottling time");
 
 Facility FirstPump("Change location of tomato paste");
 Store Ingredients("Other Ingredients", 1);
 Facility Mixer("Mixer");
 Facility Linka("Prenosova Linka");
 
-class SecondProcess : public Process{
-    void Behavior(){
-        Wait(inputTime);
-        Leave(Ingredients, 1);
-    }
-};
-
 class FinalProcess : public Process{
     void Behavior(){    
+        cout << "Time " << Time << endl;    
         Seize(Linka);
         while(ketchup != 0){
             ketchup -= 10;
-            Wait(10);
-            STAT_produce_time(Exponential(10));
+            Wait(Exponential(3));
+            STAT_produce_time(Time);
         }
+        
         Release(Linka);
     }
 
     int ketchup = finalVolume;
 };
 
-/*1000кг = 10000
-1кг = 10
-
-1500л - 3000 бутылок
-1бутылка - 5*/
-
+class SecondProcess : public Process{
+    void Behavior(){
+        Wait(1);
+        Leave(Ingredients, 1);
+    }
+};
 
 class LeaveProcess : public Process {
     void Behavior() {
@@ -60,10 +56,10 @@ class LeaveProcess : public Process {
 
 class ContinueProcess : public Process {
     void Behavior() {    
+        
         Seize(FirstPump);
         Wait(Exponential(10));
         Release(FirstPump);
-
 
         Enter(Ingredients, 1);
         Wait(1);
@@ -93,11 +89,10 @@ class FirstProcess : public Process{
         checkpaste = randomFraction();
         if(checkpaste > 0.05){  
             Wait(15);
-            //cout << "Control passed" << endl;
             (new ContinueProcess)->Activate();
         }else{
             Wait(15);
-            //cout << "Control failed, leave the system" << endl;
+            cout << "Control failed, leave the system " << endl;
             (new LeaveProcess)->Activate();
         }
     }
@@ -155,14 +150,18 @@ int main(int argc, char** argv){
         price = adjustedNumber(startPrice);
     }
     
-    Init(0, inputTime);                      //
+    Init(0, inputTime);                 //
     (new EnterSystem)->Activate();      // start of simulation
     Run();                              //
 
+
+    STAT_produce_time.Output();
+
+
     //Stats
-    cout << "+-------------------------------------------------------------------+" << endl;
-    cout << "+                             Statistics                            +" << endl;
-    cout << "+-------------------------------------------------------------------+" << endl;
+    cout << "+----------------------------------------------------------+" << endl;
+    cout << "+            Statistics                                    +" << endl;
+    cout << "+----------------------------------------------------------+" << endl;
 
     cout << "Purchased " << inputAmount << "kg of tomato paste" << endl;
     cout << "Start price for tomatos is " << startPrice << " CZK/1kg" << endl;
@@ -175,7 +174,7 @@ int main(int argc, char** argv){
         }
         cout << "Now the price is " << price << " CZK/1kg" <<  endl;
     }
-    cout << "+-------------------------------------------------------------------+" << endl;
+    cout << "+----------------------------------------------------------+" << endl;
 
     return 0;
 }
