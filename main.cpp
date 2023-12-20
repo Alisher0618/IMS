@@ -7,6 +7,9 @@
 using namespace std;
 
 #define inputTime 5760
+#define COST_PUMP 5000
+#define COST_MIXER 3500
+
 
 int inputAmount;
 double finalVolume;
@@ -16,17 +19,23 @@ double checkpaste;
 double price;
 
 double timeToProduce = 0;
+double timeToRepair = 0;
+double repairCostPump = 0;
+double repairCostMixer = 0;
+
 
 int isfailure = 0;
 int prior;
+int troublefree = 1;
 
-Stat STAT_bottling_time("Average bottling time");
+Stat STAT_bottling_time("Average bottling and wrapping up time");
 
-Facility FirstPump("Change location of tomato paste");
+Facility Pump("Change location of tomato paste");
 Store Ingredients("Other Ingredients", 1);
 Facility Mixer("Mixer");
 Facility Linka("Prenosova Linka");
 
+//function returns random number from 0 to 0.9999
 double randomFraction() {
     srand(static_cast<unsigned int>(time(nullptr)));
 
@@ -36,14 +45,22 @@ double randomFraction() {
     return result;
 }
 
+//bottling and wrapping up process
 class FinalProcess : public Process{
     void Behavior(){    
         Seize(Linka);
         while(ketchup != 0){
             ketchup -= 10;
-            timeToProduce = Time + Uniform(2, 3);
-            Wait(Uniform(2, 3));
-            STAT_bottling_time(Uniform(2, 3));
+            if(prior <= 3){
+                timeToProduce = Time + Uniform(2, 3);
+                Wait(Uniform(2, 3));
+                STAT_bottling_time(Uniform(2, 3));
+            }else{
+                timeToProduce = Time + Uniform(1, 2);
+                Wait(Uniform(1, 2));
+                STAT_bottling_time(Uniform(1, 2));
+            }
+
             
         }
         Release(Linka);
@@ -52,13 +69,14 @@ class FinalProcess : public Process{
     int ketchup = finalVolume;
 };
 
-class SecondProcess : public Process{
+class AddIngredients : public Process{
     void Behavior(){
         Wait(1);
         Leave(Ingredients, 1);
     }
 };
 
+//leave the system in case of failing thickness checking
 class LeaveProcess : public Process {
     void Behavior() {
     }
@@ -68,33 +86,39 @@ class LeaveProcess : public Process {
 class ContinueProcess : public Process {
     void Behavior() {    
         
-        Seize(FirstPump);
+        Seize(Pump);
         troublePump = randomFraction();
 
-        if(troublePump <= 0.09 * prior){
-            Wait(40);
+        //probability of pump failure
+        if(troublePump <= 0.09 * (1 + prior/10) * (1 + inputAmount / 10000) && troublefree == 1){
+            Wait(80 * prior + inputAmount / 10);
+            timeToRepair += 80 * prior + inputAmount / 10;
+            repairCostPump += COST_PUMP * prior * (inputAmount / 1000);
             isfailure += 2;
         }
-        Wait(Exponential(10));
-        Release(FirstPump);
 
+        Wait(Exponential(11) - prior);
+        Release(Pump);
 
+        //adding other ingredients
         Enter(Ingredients, 1);
         Wait(1);
-        (new SecondProcess)->Activate();
+        (new AddIngredients)->Activate();
         finalVolume = inputAmount * 1.5;
 
 
         Seize(Mixer);
         troubleMix = randomFraction();
 
-        if(troubleMix <= 0.06 * prior){
-            Wait(25);
+        //probability of mixer failure
+        if(troubleMix <= 0.06 * (1 + prior/10) * (1 + finalVolume / 10000) && troublefree == 1){
+            Wait(40 * prior  + finalVolume / 10);
+            timeToRepair += 40 * prior  + finalVolume / 10;
+            repairCostMixer += COST_MIXER * prior * (finalVolume / 1000);
             isfailure += 3;
         }
         
-
-        Wait(30);
+        Wait(32 - prior * 2);
         Release(Mixer);
         (new FinalProcess)->Activate();
     }
@@ -104,14 +128,13 @@ class ContinueProcess : public Process {
 
 
 
-class FirstProcess : public Process{
+class FirstProcess : public Process{ //checking thickness of tomato paste
     void Behavior(){
         checkpaste = randomFraction();
-        cout << checkpaste << endl;
-        if(checkpaste > 0.05){  
+        if(checkpaste > 0.05 || troublefree == 0){  //checking passed
             Wait(15);
             (new ContinueProcess)->Activate();
-        }else{
+        }else{                                      //checking failed
             Wait(15);
             isfailure = 1;
             (new LeaveProcess)->Activate();
@@ -127,6 +150,8 @@ class EnterSystem : public Event{
 
 };
 
+// function for getting random number for changing price
+// this was used to model price changes
 double adjustedNumber(double originalNumber) {
     std::srand(static_cast<unsigned int>(time(nullptr)));
 
@@ -152,20 +177,24 @@ bool isPrime(int num) {
 
 void printHelp(){
     cout << "To start program properly you need to write 2 arguments" << endl;
-    cout << "The first one is input amount of tomato paste, the second is property" << endl;
+    cout << "The first one is input amount of tomato paste, the second is property, the third is optinal and means trouble-free running" << endl;
     cout << "Input amount must in range from 1000 to 7000" << endl;
     cout << "Priority must in range from 1 to 5, where 1 means the lowest and 5 highest priorities" << endl;
-    cout << "Example: ./ims -a 1000 -p 1" << endl;
+    cout << "Trouble-free running mode can be enabled by value 0, otherwise the value is always 1" << endl;
+    cout << "Example: ./ims -a 1000 -p 1 -m 0" << endl;
 }
 
 int main(int argc, char** argv){
-    if((argc == 2 && strcmp(argv[1], "-h") == 0) || argc != 5){
+    if((argc == 2 && strcmp(argv[1], "-h") == 0) || (argc != 5 && argc != 7)){
         printHelp();
         return 0;
     }
 
     inputAmount = atoi(argv[2]);
     prior = atoi(argv[4]);
+    if(argc == 7){
+        troublefree = atoi(argv[6]);
+    }
     if(inputAmount < 1000){
         cout << "Not enough tomato paste" << endl;
         cout << "Input ./ims -h to show help" << endl;
@@ -178,6 +207,12 @@ int main(int argc, char** argv){
 
     if(!(prior >= 1 && prior <= 5)){
         cout << "Wrong input prioroity" << endl;
+        cout << "Input ./ims -h to show help" << endl;
+        return 0;
+    }
+
+    if(troublefree != 0 && troublefree != 1){
+        cout << "Wrong input trouble-free mode" << endl;
         cout << "Input ./ims -h to show help" << endl;
         return 0;
     }
@@ -204,21 +239,31 @@ int main(int argc, char** argv){
         cout << "+----------------------------------------------------------+" << endl;
         cout << "+ The pump has broken down                                 +" << endl;
         cout << "+----------------------------------------------------------+" << endl;
-        cout << "| Producing time will be increased                         |" << endl; 
+        cout << "| Producing time will be increased by " << timeToRepair << endl; 
+        cout << "| Spent on pump repair " << repairCostPump << " crowns" << endl; 
         cout << "+----------------------------------------------------------+" << endl;
         cout << endl;
     }else if(isfailure == 3){
         cout << "+----------------------------------------------------------+" << endl;
         cout << "+ The mixer has broken down                                +" << endl;
         cout << "+----------------------------------------------------------+" << endl;
-        cout << "| Producing time will be increased                         |" << endl; 
+        cout << "| Producing time will be increased by " << timeToRepair << endl; 
+        cout << "| Spent on mixer repair " << repairCostMixer << " crowns" << endl;; 
         cout << "+----------------------------------------------------------+" << endl;
         cout << endl;
     }else if(isfailure == 5){
         cout << "+----------------------------------------------------------+" << endl;
         cout << "+ Mixer and pump have broken down                          +" << endl;
         cout << "+----------------------------------------------------------+" << endl;
-        cout << "| Producing time will be increased                         |" << endl; 
+        cout << "| Producing time will be increased by " << timeToRepair << endl;
+        cout << "| Spent on repair " << repairCostPump + repairCostMixer << " crowns" << endl; 
+        cout << "+----------------------------------------------------------+" << endl;
+        cout << endl;
+    }else if(isfailure == 0){
+        cout << "+----------------------------------------------------------+" << endl;
+        cout << "+ Producing went without troubles                          +" << endl;
+        cout << "+----------------------------------------------------------+" << endl;
+        cout << "| Producing time will not be increased                     |" << endl;
         cout << "+----------------------------------------------------------+" << endl;
         cout << endl;
     }
@@ -268,19 +313,45 @@ int main(int argc, char** argv){
     
     cout << endl;
 
-    cout << "+----------------------------------------------------------+" << endl;
-    cout << "+ Procurement cost data                                    +" << endl;
-    cout << "+----------------------------------------------------------+" << endl;
-    spendMoney = price * inputAmount;
-    cout << "| Company spent " << spendMoney << " crowns on tomato paste" <<  endl;
+    if(isfailure == 1){
+        cout << "+----------------------------------------------------------+" << endl;
+        cout << "+ Procurement cost data                                    +" << endl;
+        cout << "+----------------------------------------------------------+" << endl;
+        spendMoney = price * inputAmount;
+        cout << "| Company spent " << spendMoney << " crowns on tomato paste" <<  endl;
 
-    cout << "| Company produced " << producedBottles << " bottles of ketchup" <<  endl;
+        cout << "| Company could produced " << producedBottles << " bottles of ketchup" <<  endl;
+        
+        earnedMoney = priceforketchup * producedBottles;
+        cout << "| Price per bottle is " << priceforketchup << " crowns" << endl;
+        cout << "| Company could earned " << earnedMoney << " crowns" << endl;
+        cout << "| Net profit would be " << earnedMoney - spendMoney << " crowns" << endl;
+
+        cout << "+----------------------------------------------------------+" << endl;
+    }else{
+        cout << "+----------------------------------------------------------+" << endl;
+        cout << "+ Procurement cost data                                    +" << endl;
+        cout << "+----------------------------------------------------------+" << endl;
+        spendMoney = price * inputAmount;
+        cout << "| Company spent " << spendMoney << " crowns on tomato paste" <<  endl;
+
+        cout << "| Company produced " << producedBottles << " bottles of ketchup" <<  endl;
+        
+        earnedMoney = priceforketchup * producedBottles;
+        cout << "| Price per bottle is " << priceforketchup << " crowns." << endl;
+        cout << "| Company earned " << earnedMoney << " crowns" << endl;
+        if(repairCostPump || repairCostMixer){
+            int repairCostAll = repairCostMixer + repairCostPump;
+            cout << "| Net profit including repair is " << earnedMoney - spendMoney - repairCostAll<< " crowns" << endl;
+        }else{
+            cout << "| Net profit is " << earnedMoney - spendMoney << " crowns" << endl;
+        }
+        
+
+        cout << "+----------------------------------------------------------+" << endl;
+    }
+
     
-    earnedMoney = priceforketchup * producedBottles;
-    cout << "| Price per bottle is " << priceforketchup << " crowns." << endl;
-    cout << "| Company earned " << earnedMoney << " crowns" << endl;
-
-    cout << "+----------------------------------------------------------+" << endl;
 
     return 0;
 }
